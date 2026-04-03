@@ -1,0 +1,44 @@
+{
+  "textures": [
+    {
+      "id": "e82fd06a",
+      "name": "Checkerboard",
+      "filename": "checkerboard.png"
+    },
+    {
+      "id": "ccd7e0b4",
+      "name": "Fine Noise",
+      "filename": "noise_fine.png"
+    },
+    {
+      "id": "bfa1cfcc",
+      "name": "Sine Waves",
+      "filename": "waves.png"
+    },
+    {
+      "id": "653e7dfe",
+      "name": "Brick",
+      "filename": "brick.png"
+    },
+    {
+      "id": "c817f1c5",
+      "name": "Rock",
+      "filename": "9c5e016d_360_F_202636638_q6xTwCZHCnx40czmrh7etTf5cjoCw6wc.jpg"
+    },
+    {
+      "id": "3e6aba0b",
+      "name": "Patren 1",
+      "filename": "87e20015_Screenshot 2026-04-01 213019.png"
+    },
+    {
+      "id": "fccd68ea",
+      "name": "Bricks",
+      "filename": "ecd88b68_360_F_92505416_TdZkOAwOtCkTP99FHbvdpG86XLD1zyvJ.jpg"
+    },
+    {
+      "id": "5b476a45",
+      "name": "Rock 2",
+      "filename": "86edf699_everytexture.com-stock-rocks-texture-00057.jpg"
+    }
+  ]
+}
