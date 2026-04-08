@@ -295,6 +295,33 @@ class ParametersPanel(QGroupBox):
         self.combo_mode.currentTextChanged.connect(self.params_changed)
         layout.addWidget(self.combo_mode)
 
+        # Texture rotation
+        layout.addWidget(QLabel("Texture Rotation (°):"))
+        rot_row = QHBoxLayout()
+        self.slider_rotation = QSlider(Qt.Orientation.Horizontal)
+        self.slider_rotation.setRange(0, 360)
+        self.slider_rotation.setValue(0)
+        self.spin_rotation = QDoubleSpinBox()
+        self.spin_rotation.setRange(0.0, 360.0)
+        self.spin_rotation.setValue(0.0)
+        self.spin_rotation.setSingleStep(1.0)
+        self.slider_rotation.valueChanged.connect(
+            lambda v: (self.spin_rotation.setValue(float(v)), self.params_changed.emit())
+        )
+        self.spin_rotation.valueChanged.connect(
+            lambda v: (self.slider_rotation.setValue(int(v)), self.params_changed.emit())
+        )
+        rot_row.addWidget(self.slider_rotation)
+        rot_row.addWidget(self.spin_rotation)
+        layout.addLayout(rot_row)
+
+        # Projection mode
+        layout.addWidget(QLabel("Projection:"))
+        self.combo_projection = QComboBox()
+        self.combo_projection.addItems(["planar", "cylindrical", "box", "auto"])
+        self.combo_projection.currentTextChanged.connect(self.params_changed)
+        layout.addWidget(self.combo_projection)
+
         # Subdivision
         layout.addWidget(QLabel("Subdivision:"))
         self.combo_subdiv = QComboBox()
@@ -316,6 +343,8 @@ class ParametersPanel(QGroupBox):
             clamp_max=self.spin_clamp_max.value(),
             mode=self.combo_mode.currentText(),
             subdivision=self.combo_subdiv.currentIndex(),
+            projection_mode=self.combo_projection.currentText(),
+            rotation=self.spin_rotation.value(),
         )
 
 
@@ -328,6 +357,8 @@ class SelectionPanel(QGroupBox):
     select_all = Signal()
     invert_selection = Signal()
     angle_threshold_changed = Signal(float)
+    brush_radius_changed = Signal(float)
+    brush_add_changed = Signal(bool)
 
     def __init__(self, parent=None):
         super().__init__("Selection", parent)
@@ -358,6 +389,42 @@ class SelectionPanel(QGroupBox):
             lambda v: self.angle_threshold_changed.emit(v)
         )
         layout.addWidget(self.spin_angle)
+
+        # Brush controls (temporarily disabled — widgets created but hidden)
+        self._brush_label = QLabel("Brush Radius:")
+        layout.addWidget(self._brush_label)
+        brush_row = QHBoxLayout()
+        self.slider_brush = QSlider(Qt.Orientation.Horizontal)
+        self.slider_brush.setRange(1, 500)  # world units * 10
+        self.slider_brush.setValue(50)
+        self.spin_brush = QDoubleSpinBox()
+        self.spin_brush.setRange(0.1, 500.0)
+        self.spin_brush.setValue(5.0)
+        self.spin_brush.setSingleStep(0.5)
+        self.slider_brush.valueChanged.connect(
+            lambda v: (self.spin_brush.setValue(v / 10.0),
+                       self.brush_radius_changed.emit(v / 10.0))
+        )
+        self.spin_brush.valueChanged.connect(
+            lambda v: (self.slider_brush.setValue(int(v * 10)),
+                       self.brush_radius_changed.emit(float(v)))
+        )
+        brush_row.addWidget(self.slider_brush)
+        brush_row.addWidget(self.spin_brush)
+        layout.addLayout(brush_row)
+
+        self.chk_brush_add = QCheckBox("Brush: Add (uncheck = Remove)")
+        self.chk_brush_add.setChecked(True)
+        self.chk_brush_add.toggled.connect(
+            lambda c: self.brush_add_changed.emit(bool(c))
+        )
+        layout.addWidget(self.chk_brush_add)
+
+        # Hide brush UI (feature temporarily disabled)
+        self._brush_label.setVisible(False)
+        self.slider_brush.setVisible(False)
+        self.spin_brush.setVisible(False)
+        self.chk_brush_add.setVisible(False)
 
         # Selection info
         self.lbl_selection = QLabel("Selected: 0 faces")
@@ -397,6 +464,8 @@ class ActionPanel(QGroupBox):
     export_requested = Signal()
     wireframe_toggled = Signal()
     fit_view_requested = Signal()
+    view_mode_changed = Signal(str)  # "shaded" | "texture" | "displacement"
+    tile_texture_changed = Signal(bool)
 
     def __init__(self, parent=None):
         super().__init__("Actions", parent)
@@ -413,6 +482,24 @@ class ActionPanel(QGroupBox):
         self.btn_fit.clicked.connect(self.fit_view_requested)
         view_row.addWidget(self.btn_fit)
         layout.addLayout(view_row)
+
+        # View mode
+        layout.addWidget(QLabel("View Mode:"))
+        self.combo_view = QComboBox()
+        self.combo_view.addItems(["Shaded", "Texture Preview", "Displacement"])
+        self.combo_view.currentTextChanged.connect(
+            lambda t: self.view_mode_changed.emit(
+                {"Shaded": "shaded",
+                 "Texture Preview": "texture",
+                 "Displacement": "displacement"}.get(t, "shaded")
+            )
+        )
+        layout.addWidget(self.combo_view)
+
+        self.chk_tile = QCheckBox("Tile Texture")
+        self.chk_tile.setChecked(True)
+        self.chk_tile.toggled.connect(self.tile_texture_changed)
+        layout.addWidget(self.chk_tile)
 
         # Preview / Apply
         self.btn_preview = QPushButton("Preview Displacement")

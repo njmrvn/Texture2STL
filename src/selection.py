@@ -86,6 +86,26 @@ class SelectionManager:
         matching = np.where(dots >= cos_threshold)[0]
         self.selected_faces.update(matching.tolist())
 
+    def brush_select(self, center: np.ndarray, radius: float, add: bool = True):
+        """Select (or deselect) every face whose centroid is within `radius`
+        of `center` in world space.
+
+        Args:
+            center: (3,) world-space point under the cursor
+            radius: brush radius in world units
+            add: True to add to selection, False to remove
+        """
+        if self._mesh is None:
+            return
+        centroids = self._mesh.triangles_center
+        diff = centroids - np.asarray(center, dtype=float)
+        dist2 = np.einsum('ij,ij->i', diff, diff)
+        hit = np.where(dist2 <= radius * radius)[0]
+        if add:
+            self.selected_faces.update(hit.tolist())
+        else:
+            self.selected_faces.difference_update(hit.tolist())
+
     def select_all(self):
         """Select all faces."""
         if self._mesh is not None:

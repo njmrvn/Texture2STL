@@ -1,10 +1,13 @@
 """Main application window - assembles all panels and manages workflow."""
 
+import copy
+from collections import deque
 import numpy as np
 from pathlib import Path
 from PIL import Image
 
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QScrollArea,
     QSplitter, QFileDialog, QMessageBox, QMenuBar, QStatusBar,
@@ -35,6 +38,12 @@ class MainWindow(QMainWindow):
         self._preview_mesh = None
         self._displacement_worker: DisplacementWorker | None = None
         self._selection_type = "Single Face"
+        self._undo_stack: deque = deque(maxlen=10)
+        self._sel_undo_stack: deque = deque(maxlen=100)
+        self._brush_stroke_active: bool = False
+        self._brush_add_mode: bool = True
+        self._view_mode: str = "shaded"
+        self._tile_enabled: bool = True
 
         self.setWindowTitle("Texture STL Tool")
         self.setMinimumSize(1200, 700)
@@ -42,6 +51,10 @@ class MainWindow(QMainWindow):
         self._build_ui()
         self._build_menu()
         self._connect_signals()
+
+        # Ctrl+Z → undo last applied displacement
+        self._undo_shortcut = QShortcut(QKeySequence.StandardKey.Undo, self)
+        self._undo_shortcut.activated.connect(self._on_undo)
 
         self.statusBar().showMessage("Ready. Import an STL file to begin.")
 
@@ -159,9 +172,19 @@ class MainWindow(QMainWindow):
         self.selection_panel.clear_selection.connect(self._on_clear_selection)
         self.selection_panel.select_all.connect(self._on_select_all)
         self.selection_panel.invert_selection.connect(self._on_invert_selection)
+        self.selection_panel.brush_radius_changed.connect(self._on_brush_radius)
+        self.selection_panel.brush_add_changed.connect(self._on_brush_add)
 
         # Viewport picking
         self.viewport.face_picked.connect(self._on_face_picked)
+        self.viewport.face_brushed.connect(self._on_face_brushed)
+        self.viewport.brush_painted.connect(self._on_brush_painted)
+        self.viewport.brush_stroke_ended.connect(self._on_brush_stroke_ended)
+
+        # View mode + texture preview
+        self.action_panel.view_mode_changed.connect(self._on_view_mode_changed)
+        self.action_panel.tile_texture_changed.connect(self._on_tile_toggled)
+        self.params_panel.params_changed.connect(self._on_params_changed)
 
         # Actions
         self.action_panel.preview_requested.connect(self._on_preview)
@@ -196,6 +219,10 @@ class MainWindow(QMainWindow):
         self.selection.set_mesh(self.mesh_mgr.mesh)
         self.selection.clear()
 
+        # Any prior undo snapshots reference the old mesh — drop them
+        self._undo_stack.clear()
+        self._sel_undo_stack.clear()
+
         # Display
         polydata = self.mesh_mgr.to_pyvista()
         self.viewport.display_mesh(polydata)
@@ -214,6 +241,8 @@ class MainWindow(QMainWindow):
             return
         self.selection.set_mesh(mesh)
         self.selection.clear()
+        self._undo_stack.clear()
+        self._sel_undo_stack.clear()
         polydata = self.mesh_mgr.to_pyvista()
         self.viewport.display_mesh(polydata)
         self.import_panel.update_info(self.mesh_mgr.get_stats())
@@ -237,11 +266,23 @@ class MainWindow(QMainWindow):
 
     def _on_selection_type(self, sel_type: str):
         self._selection_type = sel_type
+        self.viewport.brush_mode = (sel_type == "Brush")
+
+    def _on_face_brushed(self, face_id: int):
+        if self.mesh_mgr.mesh is None:
+            return
+        # One undo entry per stroke, not per painted face
+        if not self._brush_stroke_active:
+            self._push_sel_undo()
+            self._brush_stroke_active = True
+        self.selection.add_face(face_id)
+        self._refresh_selection_display()
 
     def _on_face_picked(self, face_id: int):
         if self.mesh_mgr.mesh is None:
             return
 
+        self._push_sel_undo()
         if self._selection_type == "Single Face":
             self.selection.select_face(face_id)
         elif self._selection_type == "Connected Region":
@@ -254,15 +295,77 @@ class MainWindow(QMainWindow):
 
         self._refresh_selection_display()
 
+    def _on_brush_stroke_ended(self):
+        self._brush_stroke_active = False
+
+    def _on_brush_radius(self, r: float):
+        self.viewport.brush_radius = r
+
+    def _on_brush_add(self, add: bool):
+        self._brush_add_mode = add
+
+    def _on_brush_painted(self, world_point, radius: float):
+        if self.mesh_mgr.mesh is None:
+            return
+        if not self._brush_stroke_active:
+            self._push_sel_undo()
+            self._brush_stroke_active = True
+        self.selection.brush_select(world_point, radius,
+                                    add=self._brush_add_mode)
+        self._refresh_selection_display()
+
+    def _on_view_mode_changed(self, mode: str):
+        self._view_mode = mode
+        self._refresh_view()
+
+    def _on_tile_toggled(self, enabled: bool):
+        self._tile_enabled = bool(enabled)
+        if self._view_mode == "texture":
+            self._refresh_view()
+
+    def _on_params_changed(self):
+        # Live update the texture preview if that view is active
+        if self._view_mode == "texture":
+            self._refresh_view()
+
+    def _refresh_view(self):
+        """Redraw the viewport according to the active view mode."""
+        if self.mesh_mgr.mesh is None:
+            return
+        polydata = self.mesh_mgr.to_pyvista()
+
+        if self._view_mode == "texture" and self._current_texture is not None:
+            params = self.params_panel.get_params()
+            self.viewport.display_texture_preview(
+                polydata,
+                self._current_texture,
+                mode=params.projection_mode,
+                tile_x=params.tile_x,
+                tile_y=params.tile_y,
+                rotation=params.rotation,
+                tile_enabled=self._tile_enabled,
+                reset_camera=False,
+            )
+        elif self._view_mode == "displacement" and self._preview_mesh is not None:
+            displaced = self.mesh_mgr.to_pyvista(self._preview_mesh)
+            self.viewport.display_preview(polydata, displaced)
+        else:
+            n_faces = len(self.mesh_mgr.mesh.faces)
+            mask = self.selection.get_selection_mask(n_faces)
+            self.viewport.display_mesh(polydata, mask, reset_camera=False)
+
     def _on_clear_selection(self):
+        self._push_sel_undo()
         self.selection.clear()
         self._refresh_selection_display()
 
     def _on_select_all(self):
+        self._push_sel_undo()
         self.selection.select_all()
         self._refresh_selection_display()
 
     def _on_invert_selection(self):
+        self._push_sel_undo()
         self.selection.invert_selection()
         self._refresh_selection_display()
 
@@ -272,9 +375,8 @@ class MainWindow(QMainWindow):
         n_faces = len(self.mesh_mgr.mesh.faces)
         mask = self.selection.get_selection_mask(n_faces)
 
-        # Update viewport - re-display with selection mask
-        polydata = self.mesh_mgr.to_pyvista()
-        self.viewport.display_mesh(polydata, mask)
+        # Update selection highlight in place — preserves camera
+        self.viewport.update_selection_display(mask)
 
         self.selection_panel.update_count(self.selection.count)
         self._update_action_readiness()
@@ -318,12 +420,44 @@ class MainWindow(QMainWindow):
         self.action_panel.hide_progress()
         self.statusBar().showMessage("Preview ready. Click 'Apply' to commit changes.")
 
+    def _push_undo(self):
+        if self.mesh_mgr.mesh is not None:
+            self._undo_stack.append(self.mesh_mgr.mesh.copy())
+
+    def _push_sel_undo(self):
+        self._sel_undo_stack.append(set(self.selection.selected_faces))
+
+    def _on_undo(self):
+        # Selection undo takes priority over mesh undo
+        if self._sel_undo_stack:
+            prev_sel = self._sel_undo_stack.pop()
+            self.selection.selected_faces = prev_sel
+            self._refresh_selection_display()
+            self.statusBar().showMessage("Undo: selection reverted.")
+            return
+        if not self._undo_stack:
+            self.statusBar().showMessage("Nothing to undo.")
+            return
+        prev = self._undo_stack.pop()
+        self.mesh_mgr.update_mesh(prev)
+        self.selection.set_mesh(prev)
+        self.selection.clear()
+        self._sel_undo_stack.clear()
+        self._preview_mesh = None
+        polydata = self.mesh_mgr.to_pyvista()
+        self.viewport.display_mesh(polydata, reset_camera=False)
+        self.import_panel.update_info(self.mesh_mgr.get_stats())
+        self.selection_panel.update_count(0)
+        self.statusBar().showMessage("Undo: reverted last change.")
+
     def _on_apply(self):
         if self._preview_mesh is not None:
             # Commit the previewed changes
+            self._push_undo()
             self.mesh_mgr.update_mesh(self._preview_mesh)
             self.selection.set_mesh(self._preview_mesh)
             self.selection.clear()
+            self._sel_undo_stack.clear()
             self._preview_mesh = None
 
             polydata = self.mesh_mgr.to_pyvista()
@@ -340,6 +474,7 @@ class MainWindow(QMainWindow):
             params = self.params_panel.get_params()
             selected = self.selection.get_selected_array()
 
+            self._push_undo()
             self.action_panel.set_status("Applying displacement...")
             self.action_panel.show_progress(0)
 
@@ -355,6 +490,8 @@ class MainWindow(QMainWindow):
         self.mesh_mgr.update_mesh(result_mesh)
         self.selection.set_mesh(result_mesh)
         self.selection.clear()
+        # Selection snapshots from the previous mesh no longer match
+        self._sel_undo_stack.clear()
 
         polydata = self.mesh_mgr.to_pyvista()
         self.viewport.display_mesh(polydata)

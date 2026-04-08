@@ -15,7 +15,7 @@
 ;    - CLI:   iscc.exe TextureSTLTool.iss
 ;
 ;  Output:
-;    release\TextureSTLTool_Setup_1.0.0.exe
+;    release\TextureSTLTool_Setup_1.0.1.exe
 ;
 ; ============================================================================
 
@@ -23,7 +23,7 @@
 ;  VERSION — Update these for each release
 ; ---------------------------------------------------------------------------
 #define MyAppName        "Texture STL Tool"
-#define MyAppVersion     "1.0.0"
+#define MyAppVersion     "1.0.1"
 #define MyAppPublisher   "Texture STL Tool Project"
 #define MyAppURL         "https://github.com/your-org/texture-stl-tool"
 #define MyAppExeName     "TextureSTLTool.exe"

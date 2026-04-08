@@ -17,7 +17,7 @@ REM    build_installer.bat --pyinstaller    — run PyInstaller first, then inst
 REM    build_installer.bat --clean          — remove release folder
 REM
 REM  Output:
-REM    ..\release\TextureSTLTool_Setup_1.0.0.exe
+REM    ..\release\TextureSTLTool_Setup_1.0.1.exe
 REM
 REM ================================================================
 
@@ -88,25 +88,20 @@ echo [2/4] Locating Inno Setup compiler...
 
 set "ISCC="
 
-REM Check common install locations
-if exist "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" (
-    set "ISCC=C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
-)
-if exist "C:\Program Files\Inno Setup 6\ISCC.exe" (
-    set "ISCC=C:\Program Files\Inno Setup 6\ISCC.exe"
-)
+REM Check common install locations. Keep each check on its own line with
+REM no parenthesized blocks — cmd misparses (x86) inside nested if/for.
+if exist "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" set "ISCC=C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+if defined ISCC goto :iscc_found
+if exist "C:\Program Files\Inno Setup 6\ISCC.exe" set "ISCC=C:\Program Files\Inno Setup 6\ISCC.exe"
+if defined ISCC goto :iscc_found
 
-REM Check PATH
-if "!ISCC!"=="" (
-    where iscc.exe >nul 2>&1
-    if %ERRORLEVEL% EQU 0 (
-        for /f "delims=" %%i in ('where iscc.exe') do set "ISCC=%%i"
-    )
-)
+REM Check PATH as a fallback
+for /f "delims=" %%i in ('where iscc.exe 2^>nul') do set "ISCC=%%i"
 
-if "!ISCC!"=="" (
+:iscc_found
+if not defined ISCC (
     echo.
-    echo   ERROR: Inno Setup compiler (ISCC.exe) not found!
+    echo   ERROR: Inno Setup compiler ^(ISCC.exe^) not found!
     echo.
     echo   Install Inno Setup 6 from:
     echo     https://jrsoftware.org/isdl.php
@@ -140,7 +135,7 @@ if %ERRORLEVEL% NEQ 0 (
     echo.
     echo   Common issues:
     echo     - Inno Setup script syntax error
-    echo     - Source files not found (PyInstaller not run?)
+    echo     - Source files not found ^(PyInstaller not run?^)
     echo     - Insufficient disk space
     echo.
     pause

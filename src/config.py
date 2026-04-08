@@ -31,6 +31,8 @@ class DisplacementParams:
     clamp_max: float = 1.0
     mode: str = "positive"        # "positive" or "centered"
     subdivision: int = 0          # 0, 1, 2, 3
+    projection_mode: str = "planar"  # "planar" | "cylindrical" | "box" | "auto"
+    rotation: float = 0.0          # texture rotation in degrees (0-360)
 
 
 class AppConfig:

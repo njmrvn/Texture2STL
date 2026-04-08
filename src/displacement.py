@@ -5,7 +5,11 @@ import trimesh
 from PIL import Image, ImageFilter
 from scipy.ndimage import gaussian_filter
 
-from .projection import compute_local_frame, project_planar, normalize_uv, apply_tiling_offset
+from .projection import (
+    compute_local_frame, project_planar, normalize_uv, apply_tiling_offset,
+    fit_cylinder_axis, project_cylindrical, project_box, detect_surface_type,
+    rotate_uv,
+)
 from .config import DisplacementParams
 
 
@@ -122,15 +126,43 @@ def apply_displacement(mesh: trimesh.Trimesh, selected_faces: np.ndarray,
     positions = mesh.vertices[selected_verts]
     normals = compute_vertex_normals_for_selection(mesh, selected_verts)
 
-    # Compute local frame from selected region
+    # Pick projection mode (auto → heuristic)
     face_normals = mesh.face_normals[selected_faces]
-    center, axis_u, axis_v, _ = compute_local_frame(positions, face_normals)
+    mode = getattr(params, "projection_mode", "planar")
+    if mode == "auto":
+        mode = detect_surface_type(positions, normals)
 
-    # Project to local 2D
-    local_uv = project_planar(positions, center, axis_u, axis_v)
+    if mode == "cylindrical":
+        axis_dir = fit_cylinder_axis(positions, normals)
+        axis_origin = positions.mean(axis=0)
+        local_uv = project_cylindrical(positions, axis_origin, axis_dir)
+        # u is already a [0,1] angular wrap — do NOT normalize or rotate it
+        # (either would destroy the seam and cause vertical streaks).
+        # Only v (height) needs to be normalized.
+        u = local_uv[:, 0]
+        v = local_uv[:, 1]
+        v_min, v_max = float(v.min()), float(v.max())
+        if v_max - v_min > 1e-10:
+            v = (v - v_min) / (v_max - v_min)
+        else:
+            v = np.zeros_like(v)
+        # Rotation is interpreted as an angular offset around the cylinder
+        # (shift u) so that it remains seamless.
+        rot = getattr(params, "rotation", 0.0)
+        if rot:
+            u = np.mod(u + rot / 360.0, 1.0)
+        uv = np.column_stack([u, v])
+    else:
+        if mode == "box":
+            local_uv = project_box(positions, normals)
+        else:  # planar
+            center, axis_u, axis_v, _ = compute_local_frame(positions, face_normals)
+            local_uv = project_planar(positions, center, axis_u, axis_v)
 
-    # Normalize to [0, 1]
-    uv = normalize_uv(local_uv)
+        # Normalize to [0, 1]
+        uv = normalize_uv(local_uv)
+        # Rotate around texture center before tiling so it stays seamless
+        uv = rotate_uv(uv, getattr(params, "rotation", 0.0))
 
     # Apply tiling and offset
     uv = apply_tiling_offset(uv, params.tile_x, params.tile_y,
